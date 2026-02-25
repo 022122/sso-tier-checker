@@ -308,10 +308,13 @@
       gap: 20px;
     }
     @media (min-width: 900px) {
-      #sec-categories { grid-template-columns: repeat(2, 1fr); }
+      #sec-categories.cols-2 { grid-template-columns: repeat(2, 1fr); }
+      #sec-categories.cols-3 { grid-template-columns: repeat(2, 1fr); }
+      #sec-categories.cols-4 { grid-template-columns: repeat(2, 1fr); }
     }
     @media (min-width: 1300px) {
-      #sec-categories { grid-template-columns: repeat(3, 1fr); }
+      #sec-categories.cols-3 { grid-template-columns: repeat(3, 1fr); }
+      #sec-categories.cols-4 { grid-template-columns: repeat(3, 1fr); }
     }
     .category { min-width: 0; }
     .category-wrapper {
@@ -777,6 +780,12 @@ async function go() {
         show('cat-' + tier, false);
       }
     });
+
+    // 根据实际显示的分类数量设置列数
+    const visibleCount = ['heavy','super','basic','unknown'].filter(t => cats[t].length > 0).length;
+    const catEl = document.getElementById('sec-categories');
+    catEl.classList.remove('cols-1','cols-2','cols-3','cols-4');
+    catEl.classList.add('cols-' + Math.min(visibleCount, 4));
 
     toast('测试完成: ' + (s.heavy||0) + ' Heavy, ' + (s.super||0) + ' Super, ' + (s.basic||0) + ' Basic');
   } catch(e) {
