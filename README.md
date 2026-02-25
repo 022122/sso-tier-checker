@@ -1,5 +1,7 @@
 # SSO Token 分级测试工具
 
+[![Deploy on Deno](https://deno.com/deno-deploy-button.svg)](https://dash.deno.com/new?url=https://raw.githubusercontent.com/022122/sso-tier-checker/main/main.ts)
+
 基于 Deno 的 Web 工具，通过查询 Grok rate-limits API 自动判断 SSO Token 的等级分类。
 
 ## 分级规则
