@@ -1,0 +1,829 @@
+
+/**
+ * SSO Token 分级测试工具 (Cloudflare Worker 版)
+ *
+ * 单文件、零依赖，可直接粘贴到 Cloudflare Dashboard 或通过 Wrangler 部署。
+ */
+
+const RATE_LIMITS_API = "https://grok.com/rest/rate-limits";
+const HEAVY_THRESHOLD = 41;
+const SUPER_THRESHOLD = 9;
+
+function classify(remaining) {
+  if (remaining === null || remaining === undefined) return "unknown";
+  if (remaining >= HEAVY_THRESHOLD) return "heavy";
+  if (remaining >= SUPER_THRESHOLD) return "super";
+  return "basic";
+}
+
+function mask(token) {
+  if (token.length > 20) return token.slice(0, 8) + "..." + token.slice(-8);
+  return token.length > 4 ? token.slice(0, 4) + "..." : token;
+}
+
+function buildHeaders(token) {
+  return {
+    "Content-Type": "application/json",
+    Cookie: `sso=${token}; sso-rw=${token}`,
+    Origin: "https://grok.com",
+    Referer: "https://grok.com/",
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+  };
+}
+
+async function checkOne(token) {
+  const t0 = Date.now();
+  try {
+    const payload = JSON.stringify({
+      requestKind: "DEFAULT",
+      modelName: "grok-4-1-thinking-1129",
+    });
+
+    const response = await fetch(RATE_LIMITS_API, {
+      method: "POST",
+      headers: buildHeaders(token),
+      body: payload,
+    });
+    const ms = Date.now() - t0;
+
+    if (response.status !== 200) {
+      return { tier: "unknown", ok: false, error: `HTTP ${response.status}`, ms, remaining: null, token, masked: mask(token) };
+    }
+
+    const data = await response.json();
+    const remaining = data.remainingQueries ?? data.remainingTokens ?? null;
+    return { tier: classify(remaining), ok: true, error: "", ms, remaining, token, masked: mask(token) };
+  } catch (e) {
+    const ms = Date.now() - t0;
+    let err = String(e?.message ?? e);
+    if (err.length > 200) err = err.slice(0, 200) + "...";
+    return { tier: "unknown", ok: false, error: err, ms, remaining: null, token, masked: mask(token) };
+  }
+}
+
+function parseTokens(raw) {
+  if (typeof raw === "string") {
+    raw = raw.replace(/,/g, "\n").split("\n").map((t) => t.trim());
+  }
+  const tokens = [];
+  for (let t of raw) {
+    t = t.trim();
+    if (!t) continue;
+    if (t.startsWith("sso=")) t = t.slice(4);
+    tokens.push(t);
+  }
+  return [...new Set(tokens)];
+}
+
+async function handleApiTest(req) {
+  const body = await req.json();
+  const tokens = parseTokens(body.tokens || []);
+  if (!tokens.length) {
+    return Response.json({ detail: "No tokens provided" }, { status: 400 });
+  }
+
+  const results = [];
+  const counts = { heavy: 0, super: 0, basic: 0, unknown: 0 };
+
+  for (const token of tokens) {
+    const result = await checkOne(token);
+    results.push(result);
+    counts[result.tier] = (counts[result.tier] || 0) + 1;
+  }
+
+  return Response.json({
+    summary: { total: tokens.length, ...counts },
+    results,
+  });
+}
+
+const PAGE_HTML = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSO Token 分级测试</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/sand.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/sand-alpha.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/orange.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/red.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/green.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/amber.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@radix-ui/colors@3.0.0/brown.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-page: #FAF9F6;
+      --bg-card: #FFFFFF;
+      --bg-input: #F5F0EB;
+      --bg-hover: #F0EBE4;
+      --border-subtle: #E8E2D9;
+      --border-default: #D9D0C5;
+      --text-primary: #1A1410;
+      --text-secondary: #6B5D4F;
+      --text-tertiary: #9B8E80;
+      --text-muted: #B8ADA2;
+      --accent: #C4704B;
+      --accent-hover: #B5613C;
+      --accent-light: #F5E6DD;
+      --heavy-bg: #FEF2F2;
+      --heavy-border: #FECACA;
+      --heavy-text: #DC2626;
+      --heavy-header: linear-gradient(135deg, #DC2626, #B91C1C);
+      --super-bg: #FFF7ED;
+      --super-border: #FED7AA;
+      --super-text: #EA580C;
+      --super-header: linear-gradient(135deg, #EA580C, #C2410C);
+      --basic-bg: #F0FDF4;
+      --basic-border: #BBF7D0;
+      --basic-text: #16A34A;
+      --basic-header: linear-gradient(135deg, #16A34A, #15803D);
+      --unknown-bg: #FFFBEB;
+      --unknown-border: #FDE68A;
+      --unknown-text: #D97706;
+      --unknown-header: linear-gradient(135deg, #D97706, #B45309);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 20px;
+      --shadow-sm: 0 1px 2px rgba(26,20,16,0.04);
+      --shadow-md: 0 2px 8px rgba(26,20,16,0.06), 0 1px 2px rgba(26,20,16,0.04);
+      --shadow-lg: 0 4px 16px rgba(26,20,16,0.08), 0 2px 4px rgba(26,20,16,0.04);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-page);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+    .container > .header,
+    .container > .card,
+    .container > #sec-prog {
+      max-width: 860px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .header { margin-bottom: 40px; }
+    .header-row { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+    .logo {
+      width: 42px; height: 42px;
+      border-radius: var(--radius-md);
+      background: var(--accent);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(196,112,75,0.25);
+    }
+    .logo i { color: #fff; font-size: 20px; }
+    .header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+    }
+    .header .desc {
+      font-size: 13.5px;
+      color: var(--text-tertiary);
+      margin-left: 56px;
+      line-height: 1.6;
+    }
+    .desc .tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .desc .tag-heavy { background: var(--heavy-bg); color: var(--heavy-text); }
+    .desc .tag-super { background: var(--super-bg); color: var(--super-text); }
+    .desc .tag-basic { background: var(--basic-bg); color: var(--basic-text); }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s;
+    }
+    .card:hover { box-shadow: var(--shadow-md); }
+    .card label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+      letter-spacing: 0.01em;
+    }
+    textarea {
+      width: 100%;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: vertical;
+      outline: none;
+      background: var(--bg-input);
+      color: var(--text-primary);
+      transition: all 0.2s;
+    }
+    textarea:focus {
+      background: var(--bg-card);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(196,112,75,0.12);
+    }
+    textarea::placeholder { color: var(--text-muted); }
+    .input-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+    }
+    .token-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 22px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-md);
+      font-family: inherit;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      box-shadow: 0 1px 3px rgba(196,112,75,0.2);
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 2px 8px rgba(196,112,75,0.3);
+      transform: translateY(-0.5px);
+    }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      backdrop-filter: blur(4px);
+    }
+    .btn-ghost:hover {
+      background: rgba(255,255,255,0.3);
+      border-color: rgba(255,255,255,0.35);
+    }
+    .progress-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .progress-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+    .progress-stat { font-size: 12px; color: var(--text-tertiary); }
+    .progress-track {
+      width: 100%;
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.5s ease-out;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 640px) {
+      .summary-grid { grid-template-columns: repeat(2, 1fr); }
+      .summary-grid .stat-card:last-child { grid-column: span 2; }
+    }
+    .stat-card {
+      border-radius: var(--radius-md);
+      padding: 16px;
+      text-align: center;
+      border: 1px solid;
+      box-shadow: var(--shadow-sm);
+    }
+    .stat-card .stat-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .stat-card .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .stat-total { background: var(--bg-card); border-color: var(--border-subtle); }
+    .stat-total .stat-label { color: var(--text-tertiary); }
+    .stat-total .stat-value { color: var(--text-primary); }
+    .stat-heavy { background: var(--heavy-bg); border-color: var(--heavy-border); }
+    .stat-heavy .stat-label { color: #F87171; }
+    .stat-heavy .stat-value { color: var(--heavy-text); }
+    .stat-super { background: var(--super-bg); border-color: var(--super-border); }
+    .stat-super .stat-label { color: #FB923C; }
+    .stat-super .stat-value { color: var(--super-text); }
+    .stat-basic { background: var(--basic-bg); border-color: var(--basic-border); }
+    .stat-basic .stat-label { color: #4ADE80; }
+    .stat-basic .stat-value { color: var(--basic-text); }
+    .stat-unknown { background: var(--unknown-bg); border-color: var(--unknown-border); }
+    .stat-unknown .stat-label { color: #FBBF24; }
+    .stat-unknown .stat-value { color: var(--unknown-text); }
+    #sec-categories {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+    @media (min-width: 900px) {
+      #sec-categories.cols-2,
+      #sec-categories.cols-3,
+      #sec-categories.cols-4 {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    .category { min-width: 0; }
+    .category-wrapper {
+      background: var(--bg-card);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-md);
+    }
+    .category-heavy .category-wrapper { border: 2px solid var(--heavy-border); }
+    .category-super .category-wrapper { border: 1px solid var(--super-border); }
+    .category-basic .category-wrapper { border: 1px solid var(--basic-border); }
+    .category-unknown .category-wrapper { border: 1px solid var(--unknown-border); }
+    .category-header {
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .category-heavy .category-header { background: var(--heavy-header); }
+    .category-super .category-header { background: var(--super-header); }
+    .category-basic .category-header { background: var(--basic-header); }
+    .category-unknown .category-header { background: var(--unknown-header); }
+    .category-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .category-title i { color: #fff; font-size: 18px; }
+    .category-title span { color: #fff; font-weight: 700; font-size: 14px; }
+    .category-badge {
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 9999px;
+    }
+    .category-actions { display: flex; gap: 8px; }
+    .category table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .category th {
+      text-align: left;
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid;
+    }
+    .category-heavy th { color: #F87171; background: #FFF5F5; border-color: #FEE2E2; }
+    .category-super th { color: #FB923C; background: #FFF8F1; border-color: #FFEDD5; }
+    .category-basic th { color: #4ADE80; background: #F0FFF4; border-color: #DCFCE7; }
+    .category-unknown th { color: #FBBF24; background: #FFFDF0; border-color: #FEF3C7; }
+    .category td {
+      padding: 12px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+    .category tr:last-child td { border-bottom: none; }
+    .category tr:hover td { background: rgba(0,0,0,0.01); }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .text-ok { color: var(--basic-text); font-weight: 500; }
+    .text-fail { color: var(--heavy-text); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { animation: fadeUp 0.35s ease-out; }
+    @keyframes pulse-bar {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .pulse-bar { animation: pulse-bar 1.5s ease-in-out infinite; }
+    .toast-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      padding: 12px 20px;
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff;
+      box-shadow: var(--shadow-lg);
+      animation: fadeUp 0.3s ease-out;
+    }
+    .toast-success { background: var(--basic-text); }
+    .toast-error { background: var(--heavy-text); }
+    .hidden { display: none !important; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+  </style>
+</head>
+<body>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <div class="container">
+    <div class="header">
+      <div class="header-row">
+        <div class="logo"><i class="ti ti-key"></i></div>
+        <h1>SSO Token 分级测试</h1>
+      </div>
+    </div>
+
+    <div class="card">
+      <label><i class="ti ti-terminal-2" style="margin-right:4px"></i>SSO Token（每行一个，支持 sso= 前缀）</label>
+      <textarea id="inp" rows="6" placeholder="粘贴 SSO Token，每行一个..."></textarea>
+      <div class="input-footer">
+        <span class="token-count" id="cnt">0 个 Token</span>
+        <button class="btn-primary" id="btn" onclick="go()">
+          <i class="ti ti-player-play" style="font-size:15px"></i>
+          开始测试
+        </button>
+      </div>
+    </div>
+
+    <div id="sec-prog" class="hidden">
+      <div class="progress-card fade-up">
+        <div class="progress-header">
+          <span class="progress-label" id="ptxt">准备中...</span>
+          <span class="progress-stat" id="pst"></span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="bar" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sec-sum" class="hidden fade-up">
+      <div class="summary-grid">
+        <div class="stat-card stat-total">
+          <div class="stat-label">总计</div>
+          <div class="stat-value" id="s-total">0</div>
+        </div>
+        <div class="stat-card stat-super">
+          <div class="stat-label">Super</div>
+          <div class="stat-value" id="s-super">0</div>
+        </div>
+        <div class="stat-card stat-basic">
+          <div class="stat-label">Basic</div>
+          <div class="stat-value" id="s-basic">0</div>
+        </div>
+        <div class="stat-card stat-unknown">
+          <div class="stat-label">未知</div>
+          <div class="stat-value" id="s-unk">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sec-categories" class="hidden">
+
+      <div id="cat-super" class="category category-super hidden">
+        <div class="category-wrapper">
+          <div class="category-header">
+            <div class="category-title">
+              <i class="ti ti-star"></i>
+              <span>Super Token</span>
+              <span class="category-badge" id="super-count">0</span>
+            </div>
+            <div class="category-actions">
+              <button class="btn-ghost" onclick="copyTokens('super')"><i class="ti ti-copy" style="font-size:14px"></i> 复制</button>
+              <button class="btn-ghost" onclick="downloadTokens('super')"><i class="ti ti-download" style="font-size:14px"></i> 下载</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
+              </tr></thead>
+              <tbody id="tbody-super"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="cat-basic" class="category category-basic hidden">
+        <div class="category-wrapper">
+          <div class="category-header">
+            <div class="category-title">
+              <i class="ti ti-leaf"></i>
+              <span>Basic Token</span>
+              <span class="category-badge" id="basic-count">0</span>
+            </div>
+            <div class="category-actions">
+              <button class="btn-ghost" onclick="copyTokens('basic')"><i class="ti ti-copy" style="font-size:14px"></i> 复制</button>
+              <button class="btn-ghost" onclick="downloadTokens('basic')"><i class="ti ti-download" style="font-size:14px"></i> 下载</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
+              </tr></thead>
+              <tbody id="tbody-basic"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="cat-unknown" class="category category-unknown hidden">
+        <div class="category-wrapper">
+          <div class="category-header">
+            <div class="category-title">
+              <i class="ti ti-help"></i>
+              <span>未知 / 失败</span>
+              <span class="category-badge" id="unknown-count">0</span>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
+              </tr></thead>
+              <tbody id="tbody-unknown"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+let testing = false;
+const tokenStore = { super: [], basic: [], unknown: [] };
+
+document.getElementById('inp').addEventListener('input', function() {
+  document.getElementById('cnt').textContent = getTokens().length + ' 个 Token';
+});
+
+function getTokens() {
+  const v = (document.getElementById('inp').value || '').trim();
+  return v ? v.split('\\n').map(s => s.trim()).filter(s => s.length > 0) : [];
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function show(id, v) {
+  document.getElementById(id).classList.toggle('hidden', !v);
+}
+
+function toast(msg, type) {
+  const d = document.createElement('div');
+  d.className = 'toast ' + (type === 'error' ? 'toast-error' : 'toast-success');
+  d.textContent = msg;
+  document.getElementById('toast-container').appendChild(d);
+  setTimeout(() => d.remove(), 3000);
+}
+
+function buildRow(idx, item) {
+  const ms = item.ms ? item.ms + 'ms' : '-';
+  let st = '';
+  if (item.ok) {
+    st = '<span class="text-ok"><i class="ti ti-check" style="font-size:15px"></i></span>';
+  } else {
+    st = '<span class="text-fail" title="' + esc(item.error || '') + '"><i class="ti ti-x" style="font-size:15px"></i></span>';
+  }
+  return '<tr>' +
+    '<td class="mono" style="color:var(--text-muted)">' + idx + '</td>' +
+    '<td class="mono" style="color:var(--text-secondary)">' + esc(item.masked) + '</td>' +
+    '<td class="mono" style="color:var(--text-tertiary)">' + ms + '</td>' +
+    '<td>' + st + '</td>' +
+    '</tr>';
+}
+
+function copyTokens(tier) {
+  const tokens = tokenStore[tier] || [];
+  if (!tokens.length) { toast('没有可复制的 Token', 'error'); return; }
+  const text = tokens.join('\\n');
+  navigator.clipboard.writeText(text).then(() => {
+    toast('已复制 ' + tokens.length + ' 个 ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' Token');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    toast('已复制 ' + tokens.length + ' 个 Token');
+  });
+}
+
+function downloadTokens(tier) {
+  const tokens = tokenStore[tier] || [];
+  if (!tokens.length) { toast('没有可下载的 Token', 'error'); return; }
+  const blob = new Blob([tokens.join('\\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sso_' + tier + '_tokens.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('已下载 ' + tokens.length + ' 个 ' + tier.charAt(0).toUpperCase() + tier.slice(1) + ' Token');
+}
+
+async function go() {
+  if (testing) return;
+  const tokens = getTokens();
+  if (!tokens.length) { toast('请输入至少一个 SSO Token', 'error'); return; }
+
+  testing = true;
+  show('sec-prog', true);
+  show('sec-sum', false);
+  show('sec-categories', false);
+
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 测试中...';
+
+  const bar = document.getElementById('bar');
+  const ptxt = document.getElementById('ptxt');
+  const pst = document.getElementById('pst');
+  bar.style.width = '0%';
+  bar.classList.add('pulse-bar');
+  ptxt.textContent = '正在查询 ' + tokens.length + ' 个 Token...';
+  pst.textContent = '';
+
+  tokenStore.super = [];
+  tokenStore.basic = [];
+  tokenStore.unknown = [];
+
+  try {
+    const res = await fetch('/api/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokens }),
+    });
+    if (!res.ok) {
+      let e = {};
+      try { e = await res.json(); } catch(x) {}
+      throw new Error(e.detail || 'HTTP ' + res.status);
+    }
+    const data = await res.json();
+    const results = data.results || [];
+
+    const cats = { super: [], basic: [], unknown: [] };
+    results.forEach(item => {
+      let tier = item.tier || 'unknown';
+      if (tier === 'heavy') tier = 'super';
+      if (cats[tier]) {
+        cats[tier].push(item);
+        tokenStore[tier].push(item.token);
+      } else {
+        cats.unknown.push(item);
+        tokenStore.unknown.push(item.token);
+      }
+    });
+
+    bar.style.width = '100%';
+    bar.classList.remove('pulse-bar');
+    ptxt.textContent = tokens.length + ' / ' + tokens.length + ' 已完成';
+
+    const s = data.summary || {};
+    show('sec-sum', true);
+    document.getElementById('s-total').textContent = s.total || 0;
+    document.getElementById('s-super').textContent = (s.super || 0) + (s.heavy || 0);
+    document.getElementById('s-basic').textContent = s.basic || 0;
+    document.getElementById('s-unk').textContent = s.unknown || 0;
+
+    pst.innerHTML = '<span style="color:var(--basic-text);font-weight:600">' + ((s.super||0)+(s.heavy||0)) + ' Super</span> \\u00b7 <span style="color:var(--text-tertiary)">' + (s.basic || 0) + ' Basic</span>';
+
+    show('sec-categories', true);
+
+    ['super', 'basic', 'unknown'].forEach(tier => {
+      const items = cats[tier];
+      const tbody = document.getElementById('tbody-' + tier);
+      const countEl = document.getElementById(tier + '-count');
+
+      if (items.length > 0) {
+        show('cat-' + tier, true);
+        if (countEl) countEl.textContent = items.length;
+        tbody.innerHTML = items.map((item, i) => buildRow(i + 1, item)).join('');
+      } else {
+        show('cat-' + tier, false);
+      }
+    });
+
+    const visibleCount = ['super','basic','unknown'].filter(t => cats[t].length > 0).length;
+    const catEl = document.getElementById('sec-categories');
+    catEl.classList.remove('cols-1','cols-2','cols-3','cols-4');
+    catEl.classList.add('cols-' + Math.min(visibleCount, 4));
+
+    toast('测试完成: ' + ((s.super||0)+(s.heavy||0)) + ' Super, ' + (s.basic||0) + ' Basic');
+  } catch(e) {
+    toast('测试失败: ' + e.message, 'error');
+  } finally {
+    testing = false;
+    btn.disabled = false;
+    btn.innerHTML = '<i class="ti ti-player-play" style="font-size:15px"></i> 开始测试';
+  }
+}
+  </script>
+</body>
+</html>
+`;
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/" && request.method === "GET") {
+      return new Response(PAGE_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/api/test" && request.method === "POST") {
+      return handleApiTest(request);
+    }
+
+    return new Response("Not Found", { status: 404 });
+  },
+};

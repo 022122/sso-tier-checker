@@ -40,4 +40,29 @@ deno task dev
 
 ## 部署
 
-可直接部署到 Deno Deploy，无需额外配置。
+### Deno Deploy
+
+点击上方按钮一键部署，或手动在 [Deno Deploy](https://dash.deno.com) 中导入本仓库。
+
+### Cloudflare Worker
+
+项目提供了独立的 `worker.js`，单文件零依赖，可直接部署到 Cloudflare Worker。
+
+**方式一：Wrangler CLI**
+
+```bash
+# 安装 Wrangler
+npm install -g wrangler
+
+# 登录
+wrangler login
+
+# 部署
+wrangler deploy worker.js --name sso-tier-checker --compatibility-date 2024-01-01
+```
+
+**方式二：Dashboard 手动创建**
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com) → Workers & Pages → Create
+2. 创建一个新 Worker，将 `worker.js` 的内容粘贴到编辑器中
+3. 点击 Deploy 即可
