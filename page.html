@@ -258,7 +258,7 @@
     /* Summary Grid */
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       margin-bottom: 24px;
     }
@@ -454,7 +454,6 @@
         <div class="logo"><i class="ti ti-key"></i></div>
         <h1>SSO Token 分级测试</h1>
       </div>
-      <p class="desc">通过 rate-limits API 查询 Token 等级</p>
     </div>
 
     <!-- Input -->
@@ -490,10 +489,6 @@
           <div class="stat-label">总计</div>
           <div class="stat-value" id="s-total">0</div>
         </div>
-        <div class="stat-card stat-heavy">
-          <div class="stat-label">Heavy</div>
-          <div class="stat-value" id="s-heavy">0</div>
-        </div>
         <div class="stat-card stat-super">
           <div class="stat-label">Super</div>
           <div class="stat-value" id="s-super">0</div>
@@ -511,31 +506,6 @@
 
     <!-- Categories -->
     <div id="sec-categories" class="hidden">
-
-      <!-- Heavy -->
-      <div id="cat-heavy" class="category category-heavy hidden">
-        <div class="category-wrapper">
-          <div class="category-header">
-            <div class="category-title">
-              <i class="ti ti-flame"></i>
-              <span>Heavy Token</span>
-              <span class="category-badge" id="heavy-count">0</span>
-            </div>
-            <div class="category-actions">
-              <button class="btn-ghost" onclick="copyTokens('heavy')"><i class="ti ti-copy" style="font-size:14px"></i> 复制</button>
-              <button class="btn-ghost" onclick="downloadTokens('heavy')"><i class="ti ti-download" style="font-size:14px"></i> 下载</button>
-            </div>
-          </div>
-          <div style="overflow-x:auto">
-            <table>
-              <thead><tr>
-                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
-              </tr></thead>
-              <tbody id="tbody-heavy"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
 
       <!-- Super -->
       <div id="cat-super" class="category category-super hidden">
@@ -613,7 +583,7 @@
 
   <script>
 let testing = false;
-const tokenStore = { heavy: [], super: [], basic: [], unknown: [] };
+const tokenStore = { super: [], basic: [], unknown: [] };
 
 document.getElementById('inp').addEventListener('input', function() {
   document.getElementById('cnt').textContent = getTokens().length + ' 个 Token';
@@ -708,7 +678,6 @@ async function go() {
   ptxt.textContent = '正在查询 ' + tokens.length + ' 个 Token...';
   pst.textContent = '';
 
-  tokenStore.heavy = [];
   tokenStore.super = [];
   tokenStore.basic = [];
   tokenStore.unknown = [];
@@ -727,9 +696,10 @@ async function go() {
     const data = await res.json();
     const results = data.results || [];
 
-    const cats = { heavy: [], super: [], basic: [], unknown: [] };
+    const cats = { super: [], basic: [], unknown: [] };
     results.forEach(item => {
-      const tier = item.tier || 'unknown';
+      let tier = item.tier || 'unknown';
+      if (tier === 'heavy') tier = 'super';
       if (cats[tier]) {
         cats[tier].push(item);
         tokenStore[tier].push(item.token);
@@ -746,17 +716,15 @@ async function go() {
     const s = data.summary || {};
     show('sec-sum', true);
     document.getElementById('s-total').textContent = s.total || 0;
-    document.getElementById('s-heavy').textContent = s.heavy || 0;
-    document.getElementById('s-super').textContent = s.super || 0;
+    document.getElementById('s-super').textContent = (s.super || 0) + (s.heavy || 0);
     document.getElementById('s-basic').textContent = s.basic || 0;
     document.getElementById('s-unk').textContent = s.unknown || 0;
 
-    const ok = (s.heavy || 0) + (s.super || 0);
-    pst.innerHTML = '<span style="color:var(--basic-text);font-weight:600">' + ok + ' 高级</span> · <span style="color:var(--text-tertiary)">' + (s.basic || 0) + ' Basic</span>';
+    pst.innerHTML = '<span style="color:var(--basic-text);font-weight:600">' + ((s.super||0)+(s.heavy||0)) + ' Super</span> · <span style="color:var(--text-tertiary)">' + (s.basic || 0) + ' Basic</span>';
 
     show('sec-categories', true);
 
-    ['heavy', 'super', 'basic', 'unknown'].forEach(tier => {
+    ['super', 'basic', 'unknown'].forEach(tier => {
       const items = cats[tier];
       const tbody = document.getElementById('tbody-' + tier);
       const countEl = document.getElementById(tier + '-count');
@@ -771,12 +739,12 @@ async function go() {
     });
 
     // 根据实际显示的分类数量设置列数
-    const visibleCount = ['heavy','super','basic','unknown'].filter(t => cats[t].length > 0).length;
+    const visibleCount = ['super','basic','unknown'].filter(t => cats[t].length > 0).length;
     const catEl = document.getElementById('sec-categories');
     catEl.classList.remove('cols-1','cols-2','cols-3','cols-4');
     catEl.classList.add('cols-' + Math.min(visibleCount, 4));
 
-    toast('测试完成: ' + (s.heavy||0) + ' Heavy, ' + (s.super||0) + ' Super, ' + (s.basic||0) + ' Basic');
+    toast('测试完成: ' + ((s.super||0)+(s.heavy||0)) + ' Super, ' + (s.basic||0) + ' Basic');
   } catch(e) {
     toast('测试失败: ' + e.message, 'error');
   } finally {
