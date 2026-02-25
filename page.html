@@ -454,12 +454,7 @@
         <div class="logo"><i class="ti ti-key"></i></div>
         <h1>SSO Token 分级测试</h1>
       </div>
-      <p class="desc">
-        通过 rate-limits API 查询配额 ·
-        <span class="tag tag-heavy">Heavy ≥41</span>
-        <span class="tag tag-super">Super 9~40</span>
-        <span class="tag tag-basic">Basic &lt;9</span>
-      </p>
+      <p class="desc">通过 rate-limits API 查询 Token 等级</p>
     </div>
 
     <!-- Input -->
@@ -534,7 +529,7 @@
           <div style="overflow-x:auto">
             <table>
               <thead><tr>
-                <th>#</th><th>Token</th><th>剩余配额</th><th>耗时</th><th>状态</th>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
               </tr></thead>
               <tbody id="tbody-heavy"></tbody>
             </table>
@@ -559,7 +554,7 @@
           <div style="overflow-x:auto">
             <table>
               <thead><tr>
-                <th>#</th><th>Token</th><th>剩余配额</th><th>耗时</th><th>状态</th>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
               </tr></thead>
               <tbody id="tbody-super"></tbody>
             </table>
@@ -584,7 +579,7 @@
           <div style="overflow-x:auto">
             <table>
               <thead><tr>
-                <th>#</th><th>Token</th><th>剩余配额</th><th>耗时</th><th>状态</th>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
               </tr></thead>
               <tbody id="tbody-basic"></tbody>
             </table>
@@ -605,7 +600,7 @@
           <div style="overflow-x:auto">
             <table>
               <thead><tr>
-                <th>#</th><th>Token</th><th>剩余配额</th><th>耗时</th><th>状态</th>
+                <th>#</th><th>Token</th><th>耗时</th><th>状态</th>
               </tr></thead>
               <tbody id="tbody-unknown"></tbody>
             </table>
@@ -647,19 +642,15 @@ function toast(msg, type) {
 
 function buildRow(idx, item) {
   const ms = item.ms ? item.ms + 'ms' : '-';
-  const rem = item.remaining != null ? String(item.remaining) : '-';
   let st = '';
   if (item.ok) {
-    st = '<span class="text-ok"><i class="ti ti-check" style="font-size:13px"></i> 成功</span>';
+    st = '<span class="text-ok"><i class="ti ti-check" style="font-size:15px"></i></span>';
   } else {
-    let e = item.error || '失败';
-    if (e.length > 40) e = e.slice(0, 40) + '...';
-    st = '<span class="text-fail" title="' + esc(item.error || '') + '"><i class="ti ti-x" style="font-size:13px"></i> ' + esc(e) + '</span>';
+    st = '<span class="text-fail" title="' + esc(item.error || '') + '"><i class="ti ti-x" style="font-size:15px"></i></span>';
   }
   return '<tr>' +
     '<td class="mono" style="color:var(--text-muted)">' + idx + '</td>' +
     '<td class="mono" style="color:var(--text-secondary)">' + esc(item.masked) + '</td>' +
-    '<td class="mono" style="font-weight:600">' + rem + '</td>' +
     '<td class="mono" style="color:var(--text-tertiary)">' + ms + '</td>' +
     '<td>' + st + '</td>' +
     '</tr>';
